@@ -18,5 +18,5 @@ services:
   runner:
     image: entsupml/unison-runner:0.4.2
     environment:
-      UNISON_API_TOKEN: 0c25898bb71d0857370b9bcc9212a9e7
+      UNISON_API_TOKEN: ${UNISON_API_TOKEN}
       UNISON_DSN: "postgresql+psycopg2://postgres:postgres@db/postgres"
