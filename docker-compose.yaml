@@ -8,15 +8,12 @@ services:
     ports:
       - "5464:5432"
 
-  loader:
+  runner_and_loader:
     build: .
     depends_on:
       - db
-    volumes:
-      - ./:/app/
-
-  runner:
-    image: entsupml/unison-runner:0.4.2
     environment:
       UNISON_API_TOKEN: ${UNISON_API_TOKEN}
       UNISON_DSN: "postgresql+psycopg2://postgres:postgres@db/postgres"
+    volumes:
+      - ./csv:/loader/csv
