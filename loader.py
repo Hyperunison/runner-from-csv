@@ -25,7 +25,7 @@ def map_dtype(series):
 
     # INTEGER
     if pd.api.types.is_integer_dtype(series):
-        return "INTEGER"
+        return "BIGINT"
 
     # FLOAT
     if pd.api.types.is_float_dtype(series):
