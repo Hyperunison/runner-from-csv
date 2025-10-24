@@ -16,7 +16,9 @@ def map_dtype(series):
     if series_non_null.str.contains(r"[-:]", regex=True).all():
         try:
             parsed = pd.to_datetime(series_non_null, errors='raise')
-            if (parsed.dt.hour == 0).all() and (parsed.dt.minute == 0).all() and (parsed.dt.second == 0).all():
+            if series_non_null.str.contains(r"^\d+:\d+$", regex=True).all():
+                return "TIME"
+            elif (parsed.dt.hour == 0).all() and (parsed.dt.minute == 0).all() and (parsed.dt.second == 0).all():
                 return "DATE"
             else:
                 return "TIMESTAMP"
@@ -77,4 +79,5 @@ if __name__ == "__main__":
     engine = sqlalchemy.create_engine("postgresql+psycopg2://postgres:postgres@db:5432/postgres")
     wait_for_postgres(engine)
     for path in Path("csv").glob("*.csv"):
+        print("Uploaading {}".format(path))
         upload_csv_to_postgres(path, engine)
