@@ -97,15 +97,15 @@ def upload_csv_to_postgres(csv_path: Path, engine):
         ddl = f'CREATE TABLE "{table_name}" ({", ".join(columns_ddl)});'
         conn.execute(text(ddl))
 
-        df.to_sql(
-            table_name,
-            con=conn,
-            if_exists="append",
-            index=False,
-            method="multi",
-        )
+    df.to_sql(
+        table_name,
+        con=engine,
+        if_exists="append",
+        index=False,
+        method="multi",
+    )
 
-        print(f"Table '{table_name}' created and data inserted.")
+    print(f"Table '{table_name}' created and data inserted.")
 
 
 def wait_for_postgres(engine, timeout=30):
