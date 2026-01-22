@@ -3,89 +3,109 @@ import sqlalchemy
 from pathlib import Path
 import re
 import time
+import io
 from sqlalchemy import text
 
 
+# -------------------------------
+# Column name normalization
+# -------------------------------
 def normalize_column_name(name: str) -> str:
-    """
-    1. CamelCase -> snake_case
-    2. \W+ -> _
-    3. lowercase
-    4. strip _
-    """
-    # CamelCase -> snake_case
     name = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', name)
     name = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name)
-
-    # Non-word characters -> _
     name = re.sub(r'\W+', '_', name)
-
     return name.lower().strip('_')
 
 
+# -------------------------------
+# Type inference
+# -------------------------------
 def map_dtype(series: pd.Series) -> str:
-    series_non_null = series.dropna().astype(str)
+    series_non_null = series.dropna()
 
-    # BOOLEAN
-    if not series_non_null.empty and series_non_null.str.lower().isin(
-        ["true", "false", "yes", "no"]
-    ).all():
+    if series_non_null.empty:
+        return "VARCHAR(1)"
+
+    as_str = series_non_null.astype(str)
+
+    if as_str.str.lower().isin({"true", "false", "yes", "no"}).all():
         return "BOOLEAN"
 
-    # DATE / TIME / TIMESTAMP
-    if not series_non_null.empty and series_non_null.str.contains(r"[-:]", regex=True).all():
+    if as_str.str.contains(r"[-:]", regex=True).all():
         try:
-            parsed = pd.to_datetime(series_non_null, errors="raise")
-            if series_non_null.str.match(r"^\d{1,2}:\d{2}(:\d{2})?$").all():
+            parsed = pd.to_datetime(as_str, errors="raise")
+
+            if as_str.str.match(r"^\d{1,2}:\d{2}(:\d{2})?$").all():
                 return "TIME"
-            elif (
+
+            if (
                 (parsed.dt.hour == 0)
                 & (parsed.dt.minute == 0)
                 & (parsed.dt.second == 0)
             ).all():
                 return "DATE"
-            else:
-                return "TIMESTAMP"
+
+            return "TIMESTAMP"
         except Exception:
             pass
 
-    # INTEGER
     if pd.api.types.is_integer_dtype(series):
         return "BIGINT"
 
-    # FLOAT
     if pd.api.types.is_float_dtype(series):
-        return "FLOAT"
+        return "DOUBLE PRECISION"
 
-    # STRING
-    max_len = max((len(str(v)) for v in series_non_null), default=1)
+    max_len = max(len(str(v)) for v in as_str)
     return f"VARCHAR({max_len})"
 
 
+# -------------------------------
+# COPY helper
+# -------------------------------
+def copy_df_to_postgres(df: pd.DataFrame, table_name: str, engine):
+    buffer = io.StringIO()
+    df.to_csv(buffer, index=False, header=False)
+    buffer.seek(0)
+
+    conn = engine.raw_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.copy_expert(
+            f'COPY "{table_name}" FROM STDIN WITH CSV',
+            buffer
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# -------------------------------
+# CSV → PostgreSQL
+# -------------------------------
 def upload_csv_to_postgres(csv_path: Path, engine):
     df = pd.read_csv(csv_path)
 
     table_name = normalize_column_name(csv_path.stem)
 
-    # нормализация имён колонок
-    normalized_columns = {
-        col: normalize_column_name(col)
-        for col in df.columns
-    }
-    df = df.rename(columns=normalized_columns)
+    # Normalize column names
+    df = df.rename(
+        columns={col: normalize_column_name(col) for col in df.columns}
+    )
 
+    # ---- CREATE TABLE ----
     with engine.begin() as conn:
-        res = conn.execute(
+        exists = conn.execute(
             text("""
                 SELECT EXISTS (
-                    SELECT FROM information_schema.tables
+                    SELECT 1
+                    FROM information_schema.tables
                     WHERE table_name = :table_name
-                );
+                )
             """),
             {"table_name": table_name},
-        )
+        ).scalar()
 
-        if res.scalar():
+        if exists:
             print(f"Table '{table_name}' already exists. Skipping.")
             return
 
@@ -97,17 +117,15 @@ def upload_csv_to_postgres(csv_path: Path, engine):
         ddl = f'CREATE TABLE "{table_name}" ({", ".join(columns_ddl)});'
         conn.execute(text(ddl))
 
-    df.to_sql(
-        table_name,
-        con=engine,
-        if_exists="append",
-        index=False,
-        method="multi",
-    )
+    # ---- COPY DATA ----
+    copy_df_to_postgres(df, table_name, engine)
 
     print(f"Table '{table_name}' created and data inserted.")
 
 
+# -------------------------------
+# Wait for PostgreSQL
+# -------------------------------
 def wait_for_postgres(engine, timeout=30):
     start = time.time()
     while time.time() - start < timeout:
@@ -120,6 +138,9 @@ def wait_for_postgres(engine, timeout=30):
     raise TimeoutError("PostgreSQL is not available.")
 
 
+# -------------------------------
+# Main
+# -------------------------------
 if __name__ == "__main__":
     engine = sqlalchemy.create_engine(
         "postgresql+psycopg2://postgres:postgres@db:5432/postgres"
