@@ -17,3 +17,11 @@ services:
       UNISON_DSN: "postgresql+psycopg2://postgres:postgres@db/postgres"
     volumes:
       - ./csv:/loader/csv
+
+  dqd-omop-5.4:
+    container_name: runner-from-csv-dqd-omop-5.4
+    image: entsupml/unison-runner-dqd-omop-5.4
+    ports: [8080]
+    volumes:
+      - ./var:/data:delegated
+      - ./Resources/dqd-omop-5.4/:/app
